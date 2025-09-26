@@ -46,9 +46,8 @@ if "n_planilhas" in st.session_state:
             abas.append(aba)
             df = p.parse(aba)
             dfs.append(df)
-        
-            # Pré-visualização
-            st.write(f"### Pré-visualização da Planilha {i+1}")
+
+            st.markdown(f"### Pré-visualização da Planilha {i+1} ({aba})")
             st.dataframe(df.head(50))
 
         st.subheader("Configuração das colunas")
@@ -61,11 +60,16 @@ if "n_planilhas" in st.session_state:
             colunas_escolhidas.append(cols)
 
         def encontrar_mais_similar(texto, lista_textos):
+            # Tratamento para células vazias ou zeradas
+            if pd.isna(texto) or str(texto).strip() in ["", "0", "0.0"]:
+                return "Nenhuma similaridade encontrada", "N/A"
             texto = str(texto)
-            lista_textos = [str(t) for t in lista_textos]
+            lista_textos = [str(t) for t in lista_textos if not pd.isna(t) and str(t).strip() not in ["", "0", "0.0"]]
+            if not lista_textos:
+                return "Nenhuma similaridade encontrada", "N/A"
             similar = difflib.get_close_matches(texto, lista_textos, n=1, cutoff=0.0)
             if not similar:
-                return "Nenhum encontrado", "N/A"
+                return "Nenhuma similaridade encontrada", "N/A"
             mais_similar = similar[0]
 
             d = difflib.Differ()
@@ -151,10 +155,22 @@ if "n_planilhas" in st.session_state:
                                 temp_df[f"Diferenças_Planilha{j+1}_{c}"] = diffs
                             resultados_finais.append((f"Planilha {i+1} vs {j+1}", temp_df))
 
-            # === Exportar com formatação ===
+            # === Exportar com formatação e ordenação ===
             output = BytesIO()
             with pd.ExcelWriter(output, engine="openpyxl") as writer:
                 for nome, df in resultados_finais:
+                    prioridade = []
+                    for _, row in df.iterrows():
+                        if any(str(row[c]).lower() in ["nenhum encontrado", "nenhuma similaridade encontrada"]
+                               for c in df.columns if "Similar" in c):
+                            prioridade.append(0)  # sem similaridade
+                        elif any(str(row[c]).lower() != "nenhuma diferença"
+                                 for c in df.columns if "Diferenças" in c):
+                            prioridade.append(1)  # tem diferença
+                        else:
+                            prioridade.append(2)  # igual
+                    df["prioridade"] = prioridade
+                    df = df.sort_values("prioridade").drop(columns=["prioridade"])
                     df.to_excel(writer, sheet_name=nome[:31], index=False)
             output.seek(0)
 

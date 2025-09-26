@@ -14,17 +14,27 @@ st.markdown("Faça upload de dois PDFs para comparar os parágrafos (cada linha 
 uploaded_pdf1 = st.file_uploader("Selecione o primeiro PDF", type=["pdf"])
 uploaded_pdf2 = st.file_uploader("Selecione o segundo PDF", type=["pdf"])
 
-def extract_paragraphs(file):
+def extract_paragraphs(pdf_path):
     paragraphs = []
-    with pdfplumber.open(file) as pdf:
+    with pdfplumber.open(pdf_path) as pdf:
         for pagina in pdf.pages:
             texto = pagina.extract_text(x_tolerance=1, y_tolerance=1)
             if texto:
+                # quebra em linhas
                 linhas = texto.split("\n")
+                buffer = []
                 for linha in linhas:
-                    if linha.strip():
-                        paragraphs.append(linha.strip())  # cada linha vira um parágrafo
+                    if linha.strip() == "":
+                        if buffer:
+                            # junta as linhas do parágrafo, mas guarda como 1 só
+                            paragraphs.append(" ".join(buffer).strip())
+                            buffer = []
+                    else:
+                        buffer.append(linha.strip())
+                if buffer:
+                    paragraphs.append(" ".join(buffer).strip())
     return paragraphs
+
 
 def compare_paragraphs(p1, p2):
     diff = difflib.ndiff(p1.split(), p2.split())
