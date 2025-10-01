@@ -31,6 +31,7 @@ with st.form("config_form"):
         st.session_state["modo"] = modo
         st.session_state["paralelizar"] = paralelizar
         st.session_state["confidence_threshold"] = confidence_threshold
+    ## === FINAL DO FORMULÁRIO ===
 
 # === UPLOAD DAS PLANILHAS ===
 if st.session_state.get("config_done", False):
@@ -73,6 +74,7 @@ if st.session_state.get("config_done", False):
         def is_empty_like(x):
             return pd.isna(x) or str(x).strip() == "" or str(x).strip() in ["0", "0.0", "-"]
 
+        ## ==== CITAR DIFERENÇAS ====
         def get_diff_summary(a, b):
             a_tokens = str(a).split()
             b_tokens = str(b).split()
@@ -96,6 +98,7 @@ if st.session_state.get("config_done", False):
                 return "Nenhuma diferença"
             return "A diferença do primeiro para o segundo é: " + "; ".join(parts)
 
+        ## ==== ENCONTRAR SIMILAR ==== 
         def encontrar_mais_similar_e_diff(texto, lista_textos, threshold=60):
             if is_empty_like(texto):
                 return "Nenhuma similaridade encontrada", "Nada encontrado"
@@ -114,5 +117,109 @@ if st.session_state.get("config_done", False):
 
         # === Botão de iniciar comparação ===
         if st.button("Iniciar Comparação"):
-            # resto do seu código de comparação e exportação aqui
-            st.success("✅ Comparação iniciada (o restante do código permanece igual)")
+            resultados_finais = []
+            total_passos = 0
+
+            if n_planilhas == 1:
+                total_passos = len(dfs[0]) * n_colunas
+            elif modo == "Primeira planilha contra as outras":
+                total_passos = len(dfs[0]) * n_colunas * (n_planilhas - 1)
+            else:
+                for i in range(n_planilhas):
+                    for j in range(i + 1, n_planilhas):
+                        total_passos += len(dfs[i]) * n_colunas
+
+            progresso_bar = st.progress(0)
+            progresso_text = st.empty()
+            progresso_atual = 0
+            inicio = time.time()
+
+            if n_planilhas == 1:
+                base_df = dfs[0].copy()
+                for c in colunas_escolhidas[0]:
+                    similares, diffs = [], []
+                    valores = base_df[c].tolist()
+                    for i, val in enumerate(valores):
+                        similar, diff = encontrar_mais_similar_e_diff(val, valores)
+                        similares.append(similar)
+                        diffs.append(diff)
+                        progresso_atual += 1
+                        progresso_bar.progress(progresso_atual / total_passos)
+                        tempo_passado = time.time() - inicio
+                        tempo_estimado = (tempo_passado / progresso_atual) * (total_passos - progresso_atual)
+                        tempo_str = f"{tempo_estimado/60:.1f} minutos restantes" if tempo_estimado > 60 else f"{tempo_estimado:.1f} segundos restantes"
+                        progresso_text.markdown(f"**Processando {progresso_atual}/{total_passos} itens... | {tempo_str}**")
+                    base_df[f"Similar_{c}"] = similares
+                    base_df[f"Diferenças_{c}"] = diffs
+                resultados_finais.append(("Planilha Única", base_df))
+
+            elif modo == "Primeira planilha contra as outras":
+                base_df = dfs[0].copy()
+                for idx, df in enumerate(dfs[1:], start=2):
+                    for c in colunas_escolhidas[0]:
+                        similares, diffs = [], []
+                        for i, val in enumerate(base_df[c].tolist()):
+                            similar, diff = encontrar_mais_similar_e_diff(val, df[colunas_escolhidas[idx-1][0]])
+                            similares.append(similar)
+                            diffs.append(diff)
+                            progresso_atual += 1
+                            progresso_bar.progress(progresso_atual / total_passos)
+                            tempo_passado = time.time() - inicio
+                            tempo_estimado = (tempo_passado / progresso_atual) * (total_passos - progresso_atual)
+                            tempo_str = f"{tempo_estimado/60:.1f} minutos restantes" if tempo_estimado > 60 else f"{tempo_estimado:.1f} segundos restantes"
+                            progresso_text.markdown(f"**Processando {progresso_atual}/{total_passos} itens... | {tempo_str}**")
+                        base_df[f"Similar_Planilha{idx}_{c}"] = similares
+                        base_df[f"Diferenças_Planilha{idx}_{c}"] = diffs
+                resultados_finais.append(("Planilha 1 vs Outras", base_df))
+
+            else:
+                for i, dfA in enumerate(dfs):
+                    for j, dfB in enumerate(dfs):
+                        if i < j:
+                            temp_df = dfA.copy()
+                            for c in colunas_escolhidas[i]:
+                                similares, diffs = [], []
+                                for val in temp_df[c].tolist():
+                                    similar, diff = encontrar_mais_similar_e_diff(val, dfB[colunas_escolhidas[j][0]])
+                                    similares.append(similar)
+                                    diffs.append(diff)
+                                    progresso_atual += 1
+                                    progresso_bar.progress(progresso_atual / total_passos)
+                                    tempo_passado = time.time() - inicio
+                                    tempo_estimado = (tempo_passado / progresso_atual) * (total_passos - progresso_atual)
+                                    tempo_str = f"{tempo_estimado/60:.1f} minutos restantes" if tempo_estimado > 60 else f"{tempo_estimado:.1f} segundos restantes"
+                                    progresso_text.markdown(f"**Processando {progresso_atual}/{total_passos} itens... | {tempo_str}**")
+                                temp_df[f"Similar_Planilha{j+1}_{c}"] = similares
+                                temp_df[f"Diferenças_Planilha{j+1}_{c}"] = diffs
+                            resultados_finais.append((f"Planilha {i+1} vs {j+1}", temp_df))
+
+            # === Exportar com formatação ===
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine="openpyxl") as writer:
+                for nome, df in resultados_finais:
+                    df.to_excel(writer, sheet_name=nome[:31], index=False)
+            output.seek(0)
+
+            wb = load_workbook(output)
+            for ws in wb.worksheets:
+                for col in ws.columns:
+                    col_letter = get_column_letter(col[0].column)
+                    ws.column_dimensions[col_letter].width = 50
+                    for i, cell in enumerate(col):
+                        if i == 0:
+                            cell.fill = PatternFill(start_color="ededed", end_color="ededed", fill_type="solid")
+                            cell.font = Font(bold=True)
+                        else:
+                            cell.alignment = Alignment(wrap_text=True, vertical='top')
+
+            output_final = BytesIO()
+            wb.save(output_final)
+            output_final.seek(0)
+
+            st.success("✅ Comparação concluída com sucesso!")
+            st.download_button(
+                label="📥 Baixar planilha com diferenças",
+                data=output_final,
+                file_name="Diferenças.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
